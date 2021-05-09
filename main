@@ -1,0 +1,171 @@
+# -*- coding: utf-8 -*-
+"""
+LDA implementation in Python
+
+@author: Michael Zhang
+"""
+
+import matplotlib.pyplot as plt
+import numpy as np
+import scipy
+
+import pysnooper
+
+class LDA(object):
+    
+    def __init__(self, tdm, T, alpha = 1., beta=1., iteration=100):
+        """
+        tdm: the copus, of (D * Num_words_in_corpus), 
+            the value of each entry is the counts of corresponding words in this the corresponding document.
+            e.g.
+            tdm[d, w] = number of word w appears in document d. 
+        T: the number of topics 
+        
+        """
+        self.tdm = tdm
+        self.D, self.W = self.tdm.shape                
+        self.alpha= alpha
+        self.beta = beta
+        self.T = T 
+        self.iteration = iteration
+        
+        # z must take in (d,w,i) as input, corresponding to 
+        # topic indicator for i-th obserevation of word w in doc d
+        self.z = {} 
+        self.topic_word_matrix = np.zeros((self.T, self.W)) 
+        self.doc_topic_matrix = np.zeros((self.D, self.T))
+        self.topic_counts = np.zeros(self.T)
+        self.doc_counts = np.zeros(self.D)
+        self.log_likelihood = np.zeros(self.iteration)
+        self._init_matrix()
+        
+    # @pysnooper.snoop('init.log')    
+    def _init_matrix(self):
+        """
+        for all words
+        1. sample a topic randomly from T topics for each word 
+        2. increment topic word count, self.topic_word_matrix
+        3. increment document topic count,  self.doc_topic_matrix 
+        4. update the topic indicator z. 
+        """
+        for d in range(self.D):
+            doc = scipy.sparse.coo_matrix(self.tdm[d])
+            word_freq_topic = zip(doc.col, doc.data)
+            for w, frequency in word_freq_topic:
+                for i in range(frequency):
+                    ############ Finish the following initialization steps #############
+                    # 1. sample a topic randomly from T topics for each word 
+                    topic = np.random.randint(self.T)
+                    # 2. increment topic word count, self.topic_word_matrix
+                    ## +++++++++ insert code here ++++++++++++++++++++++++###
+                    self.topic_word_matrix[topic, w] += 1
+                    # 3. increment document topic count,  self.doc_topic_matrix 
+                    ## +++++++++ insert code here ++++++++++++++++++++++++###
+                    self.doc_topic_matrix[d, topic] += 1
+                    # 4. update the topic indicator z. 
+                    ## +++++++++ insert code here ++++++++++++++++++++++++###
+                    self.z[(d,w,i)] = topic              
+                    ###################################################################        
+        self.topic_counts = self.topic_word_matrix.sum(axis=1)
+        self.doc_counts = self.doc_topic_matrix.sum(axis=1)
+   
+    # @pysnooper.snoop('fit.log')    
+    def fit(self):
+        for it in range(self.iteration):
+            # iterate over all the documents
+            for d in range(self.D):
+            # iterate over all the words in d
+                for w in self.tdm[d].indices: 
+                    # iterate over number of times observed word w in doc d
+                    for i in range(self.tdm[d,w]):
+                        # we apply the hidden-varible method of Gibbs sampler, the hidden variable is z[(d,w,i)]
+                        self.doc_topic_matrix[d,self.z[(d,w,i)]] -= 1
+                        self.doc_counts[d] -= 1
+                        self.topic_word_matrix[self.z[(d,w,i)],w] -= 1
+                        self.topic_counts[self.z[(d,w,i)]] -= 1
+                        ######++++++++++++++++++++++++++++++++++++++########
+                        # estimation of phi and theta for the current corpus 
+                        # according to equation [6] [7]
+                        phi_hat = (self.topic_word_matrix[:,w] + self.beta) \
+                                    / (self.topic_counts + self.beta * self.W)
+                        theta_hat = (self.doc_topic_matrix[d,:] + self.alpha) \
+                                    / (self.doc_counts[d] + self.alpha * self.T)
+                        #
+                        #phi_hat = ## +++++++++ insert code here ++++++++++++++++++++++++###
+                        #theta_hat =## +++++++++ insert code here ++++++++++++++++++++++++###
+
+                        # calculate the full conditional distribution, i.e. equation [5], 
+                        full_conditional = phi_hat * theta_hat #- np.log(topic_counts+ W *beta)
+                        full_conditional /= full_conditional.sum()
+                        # please observe the relationship between equation [5], [6], and [7]
+                        #full_conditional = ## +++++++++ insert code here ++++++++++++++++++++++++###
+                        # normalize full_conditional such that it summation equals to 1. 
+                        #full_conditional = ## +++++++++ insert code here ++++++++++++++++++++++++###
+                        
+
+                        # sample a topic for i-th obserevation of word w in doc d based on full_conditional
+                        self.z[(d,w,i)] = np.random.multinomial(1, full_conditional).argmax()
+                        #self.z[(d,w,i)] = ## +++++++++ insert code here ++++++++++++++++++++++++###
+                        
+                        # update z, doc_topic_matrix, doc_counts, topic_word_matrix, topic_counts here. 
+                        self.doc_topic_matrix[d,self.z[(d,w,i)]] += 1
+                        self.doc_counts[d] += 1
+                        self.topic_word_matrix[self.z[(d,w,i)],w] += 1
+                        self.topic_counts[self.z[(d,w,i)]] += 1
+                        # ## +++++++++ insert code here ++++++++++++++++++++++++###
+                        ############################################################
+
+
+            # Equation 2  log P(w|z)  for each iteration based on Equation [2]
+            self.log_likelihood[it] += self.T * (scipy.special.gammaln(self.W*self.beta) \
+                                       - self.W * scipy.special.gammaln(self.beta))
+            self.log_likelihood[it] += (scipy.special.gammaln(self.topic_word_matrix +self.beta).sum(axis=1) \
+                                        - scipy.special.gammaln(self.topic_counts+self.beta*self.W)).sum()
+            ## +++++++++ insert code below ++++++++++++++++++++++++###
+            #self.log_likelihood[it]  
+            ############################################################
+            print('Iteration %i\t LL: %.2f' % (it,self.log_likelihood[it]))
+
+# dataloading 
+from sklearn import datasets
+from sklearn.feature_extraction.text import CountVectorizer
+
+
+synthetic_data = scipy.io.loadmat('well_separated_synthetic.mat')
+sk_tdm = scipy.sparse.csr_matrix(synthetic_data['W'])
+sk_tdm # of shape 100 \times 500 
+
+# first run LDA on synthetic data set, 
+# if code works then topic_word_matrix should 
+# resemble true "phi", up to reordering
+
+# distribution of words in 5 topics, 
+plt.imshow(synthetic_data['phi'],aspect='auto')
+# run LDA with 5 topics on synthetic data set
+lda = LDA(sk_tdm, T=5, iteration=100)
+lda.fit()
+# compare LDA topic word matrix and true topic word distribution
+f,a = plt.subplots(1,2)
+
+a[0].imshow(lda.topic_word_matrix, aspect='auto')
+a[1].imshow(synthetic_data['phi'], aspect='auto')
+
+# data loading 
+# create term document matrix, documents from collection of 20 newsgroups
+count_vector = CountVectorizer(stop_words="english", 
+                                min_df=.01, 
+                                max_df=.95)
+data_set = datasets.fetch_20newsgroups()
+sk_tdm = count_vector.fit_transform(data_set['data'])
+# get list of words in corpus
+corpus_words = np.array(count_vector.get_feature_names())    
+
+# run LDA with 20 topics on 20 news groups dataset
+lda = LDA(sk_tdm, T=20, iteration=100)
+lda.fit()
+# get top 10 words in each topic, should make sense
+for t in range(lda.T):
+    top_words_t = [np.argsort(lda.topic_word_matrix[t])[::-1][:10]]
+    print(corpus_words[top_words_t])
+# plot train loglikelihood, should increase over iterations
+plt.plot(range(lda.iteration),lda.log_likelihood)
